@@ -1,4 +1,4 @@
-package nio;
+package nio.test2;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +14,7 @@ import java.util.Iterator;
 
 public class NioServer implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(NioServer.class);
-    //每个Server管理一个Selector对象
+    //每个服务端包含一个Selector对象，用于轮询注册Channel上的就绪事件
     private Selector selector;
 
     private ByteBuffer readBuf = ByteBuffer.allocate(1024);
@@ -27,9 +27,10 @@ public class NioServer implements Runnable {
             selector = Selector.open();
             //实例化ServerSocketChannel
             ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
-            //ServerSocketChannel设置为非阻塞模式，向Selector注册，此channel只关注客户端连接事件
+            //ServerSocketChannel设置为非阻塞模式，并向Selector注册，此channel只关注接收客户端连接事件
             serverSocketChannel.configureBlocking(false);
             serverSocketChannel.bind(new InetSocketAddress(port));
+            //注册连接事件
             serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
             logger.info("success start NioServer,port is {}", port);
         } catch (Exception e) {
@@ -38,19 +39,20 @@ public class NioServer implements Runnable {
     }
 
     /**
-     * 接收到客户端新的连接请求时的处理逻辑，即ServerSocketChannel关注的事件
+     * 接收到客户端新的连接请求时的处理逻辑，即ServerSocketChannel关注的新建连接事件，调用此事件处理器时
+     * 服务端一定接收到了新的连接请求，否则不会进入该事件处理器
      *
      * @param selectionKey 就绪通道的唯一键
      */
     private void accept(SelectionKey selectionKey) {
         try {
             ServerSocketChannel serverSocketChannel = (ServerSocketChannel) selectionKey.channel();
-            //由于ServerSocketChannel设置了非阻塞模式，所以这里不阻塞，没有连接则直接返回
+            //由于ServerSocketChannel设置了非阻塞模式，所以这里不阻塞，没有连接则直接返回，而且此处一定有连接
             //若有则获取客户端的SocketChannel
             SocketChannel socketChannel = serverSocketChannel.accept();
             //将客户端的SocketChannel也设为非阻塞模式，客户端那边已经设置过
             socketChannel.configureBlocking(false);
-            //客户端的SocketChannel只关注该channel的读取事件
+            //客户端的SocketChannel在注册后先关注该channel的读取事件
             socketChannel.register(selector, SelectionKey.OP_READ);
         } catch (Exception e) {
             logger.error("create new client connection:{} fail:", selectionKey, e);
@@ -58,7 +60,7 @@ public class NioServer implements Runnable {
     }
 
     /**
-     * SocketChannel读数据事件就绪的处理逻辑，即SocketChannel关注的事件,需要把channel中的数据写到buffer
+     * SocketChannel读数据事件就绪的处理逻辑，即SocketChannel关注的事件，需要把channel中的数据写到buffer
      * 所以buffer是读模式
      *
      * @param selectionKey 就绪通道的唯一键
@@ -68,25 +70,27 @@ public class NioServer implements Runnable {
         //获取socketChannel
         SocketChannel socketChannel = (SocketChannel) selectionKey.channel();
         try {
-            //读取channel数据写入buffer
+            //读取channel数据写入buffer，此方法不会阻塞，count=0是没有数据，count=-1应该是客户端关闭了
             int count = socketChannel.read(readBuf);
-            //没有数据直接返回，需要关闭socketChannel
+            logger.info("count is {}", count);
+            //客户端关闭时需要关闭服务端的socketChannel
             if (count == -1) {
+                logger.info("客户端连接关闭。。。");
+                //客户端断开时，需要关闭服务端的SocketChannel
                 socketChannel.close();
                 selectionKey.cancel();
                 return;
+            } else if (count == 0) {
+                logger.warn("no data to read...");
+                return;
             }
-            //写入完成后，将buffer置为读模式
-            readBuf.flip();
-            byte[] bytes = new byte[readBuf.remaining()];
-            readBuf.get(bytes);
-            String msg = new String(bytes, StandardCharsets.UTF_8).trim();
+            String msg = new String(readBuf.array(), StandardCharsets.UTF_8).trim();
             logger.info("receive NioClient msg:{}", msg);
             //向客户端返回响应
-            write(selectionKey, msg + ":nio server response");
+            this.write(selectionKey, msg + ":nio server response");
         } catch (Exception e) {
             logger.error("read data from channel:{} fail", selectionKey, e);
-            //注意这里不能在finally中关闭socketChannel，否则这个客户端对应的channel就关闭了，后续就不能在使用了
+            //注意这里不能在finally中关闭socketChannel，否则这个客户端对应的channel就关闭了，后续就不能使用了
             try {
                 socketChannel.close();
             } catch (Exception e1) {
@@ -127,13 +131,13 @@ public class NioServer implements Runnable {
     public void run() {
         while (true) {
             try {
-                //这里会发送阻塞
+                //此处会阻塞直至有一个客户端Channel有就绪事件
                 selector.select();
                 Iterator<SelectionKey> selectionKeyIterator = selector.selectedKeys().iterator();
                 //对每一个准备就绪的channel进行操作
                 while (selectionKeyIterator.hasNext()) {
                     SelectionKey selectionKey = selectionKeyIterator.next();
-                    //删除此selectionKey，否则后续会一直会有此selectionKey
+                    //删除此selectionKey，否则后续会一直有此selectionKey
                     selectionKeyIterator.remove();
                     if (selectionKey.isValid()) {
                         if (selectionKey.isAcceptable()) {
