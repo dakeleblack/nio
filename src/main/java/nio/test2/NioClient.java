@@ -1,4 +1,4 @@
-package nio;
+package nio.test2;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +34,7 @@ public class NioClient {
             socketChannel = SocketChannel.open();
             //设置该SocketChannel为非阻塞模式，没有读到数据会直接返回继续下一次
             socketChannel.configureBlocking(false);
+            //连接服务端
             socketChannel.connect(new InetSocketAddress(host, port));
             // 判断是否已经连接成功，只有连接成功了才发送数据
             if (socketChannel.finishConnect()) {
@@ -54,6 +55,9 @@ public class NioClient {
                     //TODO 接收服务端返回的响应
                     int count = socketChannel.read(readBuf);
                     if (count == -1) {
+                        continue;
+                    } else if (count == 0) {
+                        logger.warn("no data to read...");
                         continue;
                     }
                     byte[] bytes = new byte[count];

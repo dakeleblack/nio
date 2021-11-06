@@ -1,4 +1,4 @@
-package nio;
+package nio.test2;
 
 public class NioClientStart {
     private static final String host = "127.0.0.1";
